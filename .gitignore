@@ -1,0 +1,4 @@
+/venv/
+/good-models/
+velocity_field.pt
+dataset.pt
