@@ -1,4 +1,4 @@
-from torchmetrics.image.ssim import StructuralSimilarityIndexMeasure
+# from torchmetrics.image.ssim import StructuralSimilarityIndexMeasure
 from datetime import timedelta
 
 import argparse
@@ -8,7 +8,6 @@ import torch
 
 from torch import nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import math
 
 # from sklearn.mixture import GaussianMixture
@@ -60,7 +59,7 @@ im_size = 64
 
 
 class FourierEmbedding(nn.Module):
-    def __init__(self, dim, scale=10.0):
+    def __init__(self, dim, scale=30.0):
         super().__init__()
         self.dim = dim
         self.scale = scale
@@ -107,7 +106,7 @@ class TimeResBlock(nn.Module):
 
 
 class VelocityField(nn.Module):
-    def __init__(self, time_embed_dim=128, fourier_scale=10.0):
+    def __init__(self, time_embed_dim=256, fourier_scale=100.0):
         super().__init__()
         # Time embedding
         self.time_embed = nn.Sequential(
@@ -164,6 +163,9 @@ class VelocityField(nn.Module):
         return self.out(h)  # (B, 1, 64, 64)
 
 
+
+
+
 # training arguments
 
 lr = args.lr
@@ -171,12 +173,13 @@ batch_size = args.batch_size
 iterations = args.iterations
 # batch_size = 1
 # iterations = 1
-print_every = 1000
+print_every = 10000
 
 dataset = torch.load("dataset.pt")
+dataset = (dataset - dataset.min()) / \
+    (dataset.max() - dataset.min())  # Normalize to [0,1]
+dataset = dataset * 2 - 1  # Scale to [-1,1] for better tanh-like behavior
 print("Dataset loaded from dataset.pt")
-
-# velocity field model init
 vf = VelocityField().to(device)
 
 # instantiate an affine path object
@@ -184,9 +187,15 @@ path = AffineProbPath(scheduler=CondOTScheduler())
 
 
 # init optimizer
-optim = torch.optim.Adam(vf.parameters(), lr=lr)
-scheduler = ReduceLROnPlateau(
-    optim, mode='min', factor=0.5, patience=5000, verbose=True)
+optim = torch.optim.AdamW(vf.parameters(), lr=lr, weight_decay=1e-5)  # AdamW with decay
+
+warmup_steps = 5000
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optim,
+    max_lr=lr,
+    total_steps=iterations,
+    pct_start=warmup_steps / iterations
+)
 
 train_start_time = time.time()
 losses = []  # Initialize an empty list to store losses
@@ -209,14 +218,15 @@ for i in range(iterations):
     path_sample = path.sample(t=t, x_0=x_0, x_1=x_1)
 
     # flow matching l2 loss
-    loss = F.mse_loss(vf(path_sample.x_t, path_sample.t), path_sample.dx_t)
+    loss = F.mse_loss(
+        vf(path_sample.x_t, path_sample.t), path_sample.dx_t)
 
     # optimizer step
     loss.backward()  # backward
 
     # Apply gradient clipping
-    # torch.nn.utils.clip_grad_norm_(
-    #    vf.parameters(), max_norm=1.0)  # Clip gradients
+#    torch.nn.utils.clip_grad_norm_(
+#        vf.parameters(), max_norm=0.5)  # Clip gradients
 
     optim.step()  # update
     scheduler.step(loss)
@@ -248,8 +258,17 @@ class WrappedModel(ModelWrapper):
 
 wrapped_vf = WrappedModel(vf)
 
+def unnormalize(samples):
+    """Reverse [-1,1] scaling back to [0,1]"""
+    return (samples + 1) / 2
+# (dataset - dataset.min()) / (dataset.max() - dataset.min())
+def unscale(samples):
+    """Reverse [0,1] scaling"""
+    return (samples) * (dataset.max() - dataset.min()) + dataset.min()
+
+
 # step size for ode solver
-step_size = 0.05
+step_size = 0.005
 
 batch_size = 1  # batch size, works for batch_size > 1, but don't modify here
 eps_time = 1e-2
@@ -257,7 +276,7 @@ T = torch.linspace(0, 1, 10)  # sample times
 T = T.to(device=device)
 x_init = torch.randn(batch_size, 1, im_size, im_size, device=device)
 solver = ODESolver(velocity_model=wrapped_vf)  # create an ODESolver class
-sol = solver.sample(time_grid=T, x_init=x_init, method='midpoint',
+sol = solver.sample(time_grid=T, x_init=x_init, method='rk4',
                     step_size=step_size, return_intermediates=True)  # sample from the model
 sol.shape
 sol = sol.cpu()
@@ -270,9 +289,11 @@ plot_indices = np.linspace(0, len(T) - 1, num_plots, dtype=int)
 # Create the figure and subplots
 fig, axs = plt.subplots(1, num_plots, figsize=(20, 20))
 
+
 # Iterate over the selected time steps and plot
 for i, plot_index in enumerate(plot_indices):
-    axs[i].imshow(sol[plot_index].squeeze(), cmap='gray')
+    axs[i].imshow(unscale(unnormalize(sol[plot_index].squeeze())), cmap='gray')
+#    axs[i].imshow(unscale(sol[plot_index].squeeze()), cmap='gray')
     axs[i].set_aspect('equal')
     axs[i].axis('off')
     axs[i].set_title('t= %.2f' % (T[plot_index]))  # Use the correct time value
@@ -286,6 +307,7 @@ plt.savefig(f'{outdir}/generated-sample.pdf', format='pdf')
 torch.save(vf, f"{outdir}/velocity_field.pt")
 print("Model saved as velocity_field.pt")
 
+"""
 # Evaluate using SSIM
 ssim = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
 
@@ -306,7 +328,7 @@ sol.shape
 sol = sol.cpu()
 T = T.cpu()
 
-generated_images = sol.to(device)
+generated_images = unscale(unnormalize(sol)).to(device)
 
 # Ensure they are in the correct value range
 if real_images.min() < 0:
@@ -318,10 +340,11 @@ real_images = real_images.clamp(0, 1)
 generated_images = generated_images.clamp(0, 1)
 ssim_score = ssim(generated_images, real_images)
 print(f"SSIM Score: {ssim_score.item():.4f}")
+"""
 
 # Save to file
 with open(f"{outdir}/ssim.txt", "w") as f:
-    f.write(f"SSIM: {ssim_score.item():.4f}\n")
+    # f.write(f"SSIM: {ssim_score.item():.4f}\n")
     if iterations > 1000:
         f.write(f"Loss: {losses[-1]:.4f}\n")
     f.write(f"Time elapsed during training: {train_time}\n")

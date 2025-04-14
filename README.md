@@ -4,4 +4,7 @@
 `make_dataset.py` generates our dataset, if needed.
 `sample.py` takes as input a trained velocity_field.pt and generates a sample.
 
-# fm-ct
+It looks like `lr = .0001` is way too slow. Model just does not converge. 
+`lr = .001` is good with batch size 64.
+
+
