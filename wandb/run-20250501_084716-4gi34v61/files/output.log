@@ -1,0 +1,8 @@
+
+Dataset loaded from dataset.pt
+Traceback (most recent call last):
+  File "/Users/johnma/fm-ct/fm-ct.py", line 201, in <module>
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+  File "/Users/johnma/fm-ct/venv/lib/python3.9/site-packages/torch/optim/lr_scheduler.py", line 1641, in __init__
+    raise ValueError("Expected float between 0 and 1 pct_start, but got {}".format(pct_start))
+ValueError: Expected float between 0 and 1 pct_start, but got 500.0

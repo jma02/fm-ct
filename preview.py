@@ -3,10 +3,10 @@ import matplotlib.pyplot as plt
 
 dataset= torch.load("dataset.pt")
 
-plt.imshow(dataset[0].squeeze(), cmap='gray')
+plt.imshow(dataset[-1].squeeze(), cmap='gray')
 
 plt.show()
-print(dataset[0].squeeze().max())
+print(dataset[-1].squeeze().max())
 
 #dataset = (dataset - dataset.min()) / (dataset.max() - dataset.min())  # Normalize to [0,1]
 #dataset = dataset * 2 - 1  # Scale to [-1,1] for better tanh-like behavior

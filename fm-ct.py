@@ -1,4 +1,12 @@
 # from torchmetrics.image.ssim import StructuralSimilarityIndexMeasure
+import warnings
+import matplotlib.pyplot as plt
+from flow_matching.path.scheduler import CondOTScheduler
+from flow_matching.path import AffineProbPath
+import numpy as np
+from flow_matching.utils import ModelWrapper
+from flow_matching.solver import ODESolver
+import wandb
 from datetime import timedelta
 
 import argparse
@@ -10,21 +18,8 @@ from torch import nn
 import torch.nn.functional as F
 import math
 
-# from sklearn.mixture import GaussianMixture
-import numpy as np
-
-# flow_matching
-from flow_matching.path.scheduler import CondOTScheduler
-from flow_matching.path import AffineProbPath
-from flow_matching.solver import ODESolver
-from flow_matching.utils import ModelWrapper
-
-# visualization
-import matplotlib.pyplot as plt
-
-
-# To avoid meshgrid warning
-import warnings
+from dotenv import load_dotenv
+load_dotenv()
 
 warnings.filterwarnings("ignore", category=UserWarning, module='torch')
 
@@ -163,11 +158,7 @@ class VelocityField(nn.Module):
         return self.out(h)  # (B, 1, 64, 64)
 
 
-
-
-
 # training arguments
-
 lr = args.lr
 batch_size = args.batch_size
 iterations = args.iterations
@@ -175,10 +166,28 @@ iterations = args.iterations
 # iterations = 1
 print_every = 10000
 
+
 dataset = torch.load("dataset.pt")
 dataset = (dataset - dataset.min()) / \
     (dataset.max() - dataset.min())  # Normalize to [0,1]
 dataset = dataset * 2 - 1  # Scale to [-1,1] for better tanh-like behavior
+
+# Start a new wandb run to track this script.
+run = wandb.init(
+    # Set the wandb entity where your project will be logged (generally your team name).
+    entity=os.getenv("WANDB_TEAM_NAME"),
+    # Set the wandb project where this run will be logged.
+    project=os.getenv("WANDB_PROJECT"),
+    # Track hyperparameters and run metadata.
+    config={
+        "learning_rate": lr,
+        "architecture": "Flow Matching, UNet+Skips",
+        "dataset": "Circles",
+        "epochs": (iterations * batch_size) / dataset.shape[0],
+        "batch size": batch_size
+    },
+)
+
 print("Dataset loaded from dataset.pt")
 vf = VelocityField().to(device)
 
@@ -197,11 +206,8 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
     pct_start=warmup_steps / iterations
 )
 
-train_start_time = time.time()
-losses = []  # Initialize an empty list to store losses
 # train
 print("Training velocity field")
-start_time = time.time()
 for i in range(iterations):
     optim.zero_grad()
 
@@ -230,25 +236,8 @@ for i in range(iterations):
 
     optim.step()  # update
     scheduler.step(loss)
-
-    # log loss
     if (i + 1) % print_every == 0:
-        elapsed = time.time() - start_time
-        losses.append(loss.item())  # Append the loss to the list
-        print('| iter {:6d} | {:5.2f} ms/step | loss {:8.3f} '
-              .format(i + 1, elapsed * 1000 / print_every, loss.item()))
-        start_time = time.time()
-
-plt.plot(losses)
-plt.xlabel('Iteration')
-plt.ylabel('Loss')
-plt.title('Training Loss Curve')
-plt.savefig(f'{outdir}/loss_curve.pdf', format='pdf')
-# plt.show()
-train_end_time = time.time()
-
-train_time = str(timedelta(seconds=int(train_end_time - train_start_time)))
-print(f"Time elapsed during training: {train_time}")
+        run.log({"loss": loss.item()})
 
 
 class WrappedModel(ModelWrapper):
@@ -258,13 +247,10 @@ class WrappedModel(ModelWrapper):
 
 wrapped_vf = WrappedModel(vf)
 
-def unnormalize(samples):
+
+def unscale(samples):
     """Reverse [-1,1] scaling back to [0,1]"""
     return (samples + 1) / 2
-# (dataset - dataset.min()) / (dataset.max() - dataset.min())
-def unscale(samples):
-    """Reverse [0,1] scaling"""
-    return (samples) * (dataset.max() - dataset.min()) + dataset.min()
 
 
 # step size for ode solver
@@ -292,8 +278,7 @@ fig, axs = plt.subplots(1, num_plots, figsize=(20, 20))
 
 # Iterate over the selected time steps and plot
 for i, plot_index in enumerate(plot_indices):
-    axs[i].imshow(unscale(unnormalize(sol[plot_index].squeeze())), cmap='gray')
-#    axs[i].imshow(unscale(sol[plot_index].squeeze()), cmap='gray')
+    axs[i].imshow(unscale(sol[plot_index].squeeze()), cmap='gray')
     axs[i].set_aspect('equal')
     axs[i].axis('off')
     axs[i].set_title('t= %.2f' % (T[plot_index]))  # Use the correct time value
@@ -341,11 +326,3 @@ generated_images = generated_images.clamp(0, 1)
 ssim_score = ssim(generated_images, real_images)
 print(f"SSIM Score: {ssim_score.item():.4f}")
 """
-
-# Save to file
-with open(f"{outdir}/ssim.txt", "w") as f:
-    # f.write(f"SSIM: {ssim_score.item():.4f}\n")
-    if iterations > 1000:
-        f.write(f"Loss: {losses[-1]:.4f}\n")
-    f.write(f"Time elapsed during training: {train_time}\n")
-

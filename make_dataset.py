@@ -17,7 +17,7 @@ def create_circles_dataset(num_samples=5000, im_size=256):
 
     for sample_idx in range(num_samples):
         img = torch.zeros((im_size, im_size), dtype=torch.float32)
-        num_circles = random.randint(1, 4)
+        num_circles = 2
         circles = []
 
         for _ in range(num_circles):

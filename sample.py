@@ -159,7 +159,6 @@ def unscale(samples):
     return (samples) * (data_max - data_min) + data_min
 
 
-
 # Calculate the indices of the time steps to plot
 num_plots = 10
 plot_indices = np.linspace(0, len(T) - 1, num_plots, dtype=int)
@@ -169,10 +168,12 @@ fig, axs = plt.subplots(1, num_plots, figsize=(20, 20))
 
 # Iterate over the selected time steps and plot
 for i, plot_index in enumerate(plot_indices):
-    axs[i].imshow(unscale(unnormalize(sol[plot_index].squeeze())), cmap='gray')
+    im = axs[i].imshow(sol[plot_index].squeeze(), cmap='gray')
     axs[i].set_aspect('equal')
     axs[i].axis('off')
-    axs[i].set_title('t= %.2f' % (T[plot_index]))  # Use the correct time value
+    axs[i].set_title('t= %.2f' % (T[plot_index]))
+    if i == len(plot_indices) - 1:
+        fig.colorbar(im, ax=axs[i], fraction=0.046, pad=0.04)
 
 plt.tight_layout()
 plt.savefig('sampled_manual-2.pdf', format='pdf')
